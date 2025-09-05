@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Panel D — Dinámica de la Camada (pólizas)</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root { --bg:#0b0c0f; --card:#141821; --muted:#94a3b8; --text:#e2e8f0; --accent:#22c55e; }
+    * { box-sizing:border-box }
+    body { margin:0; font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial; background:var(--bg); color:var(--text) }
+    .wrap { max-width: 1100px; margin: 24px auto; padding: 0 16px }
+    h1 { font-size:22px; margin:0 0 14px }
+    .controls { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom: 14px }
+    select, .btn { appearance:none; background:#1c2230; border:1px solid #2a3140; color:var(--text); padding:8px 12px; border-radius:999px; font-weight:600; cursor:pointer }
+    .btn[aria-pressed="true"] { background: var(--accent); color:#06110a; border-color: transparent }
+    .grid { display:grid; grid-template-columns:1fr; gap:14px }
+    .kpi { display:grid; grid-template-columns:repeat(4,1fr); gap:14px }
+    .kpi .value { font-size:26px; font-weight:700 }
+    @media (max-width:900px){ .kpi{ grid-template-columns:1fr 1fr } }
+    .card { background:var(--card); border:1px solid #212838; border-radius:14px; box-shadow:0 1px 0 rgba(255,255,255,.04) inset }
+    .card h2 { margin:0; font-size:14px; color:var(--muted); font-weight:600; padding:12px 14px; border-bottom:1px solid #1f2533 }
+    .card .content { padding:14px }
+    .muted { color:var(--muted); font-size:12px }
+    table { width:100%; border-collapse: collapse }
+    th, td { padding: 8px 6px; text-align: left; border-bottom: 1px solid #1f2533 }
+    thead th { color: var(--muted); font-weight:600; font-size: 12px; position: sticky; top:0; background:#141821; z-index:1 }
+    tbody td { font-size: 13px }
+    .badge { display:inline-block; padding:2px 8px; border-radius:999px; background:#1c2230; border:1px solid #2a3140; font-size:12px }
+    .spark-wrap { position: relative; height: 280px }
+    .legend { display:flex; align-items:center; gap:6px; margin-top: 8px }
+    .sw { height: 10px; width: 32px; border-radius: 6px }
+    .right { text-align:right }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Panel D — Dinámica de la Camada</h1>
+    <div class="controls">
+      <label for="cohort" class="muted">Cohorte</label>
+      <select id="cohort"></select>
+      <button id="btn-cancel" class="btn" aria-pressed="true">Cancelación %</button>
+      <button id="btn-survive" class="btn" aria-pressed="false">Supervivencia %</button>
+      <span class="muted" style="margin-left:auto">Corte: 31-ago-2025</span>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <h2>KPIs de cohorte</h2>
+        <div class="content">
+          <div class="kpi">
+            <div>
+              <div class="muted">Vendidas (N)</div>
+              <div class="value" id="kpiN">—</div>
+            </div>
+            <div>
+              <div class="muted">Cancelación acumulada (%)</div>
+              <div class="value" id="kpiCancPct">—</div>
+            </div>
+            <div>
+              <div class="muted">Cancelación acumulada (N)</div>
+              <div class="value" id="kpiCancN">—</div>
+            </div>
+            <div>
+              <div class="muted">Pico de riesgo</div>
+              <div class="value" id="kpiPico">—</div>
+            </div>
+          </div>
+          <div class="muted" style="margin-top:8px">Nota: las cancelaciones por tramo (hazard) se calculan como diferencias de puntos porcentuales entre edades consecutivas. El N por tramo es aproximado: Δpp × N / 100 (redondeado).</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Curva de la cohorte seleccionada</h2>
+        <div class="content">
+          <div class="spark-wrap">
+            <svg id="spark" width="100%" height="100%" viewBox="0 0 800 280" preserveAspectRatio="none"></svg>
+          </div>
+          <div class="legend muted">
+            <span>Escala Y: 0–100%</span>
+            <span class="sw" style="background:linear-gradient(90deg, #22c55e, #ef4444)"></span>
+            <span>m0 → mX</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Hazard por tramo (Δ pp y N aprox.)</h2>
+        <div class="content">
+          <div style="overflow:auto; max-height:50vh">
+            <table>
+              <thead>
+                <tr>
+                  <th>Tramo</th>
+                  <th class="right">Δ pp</th>
+                  <th class="right">Cancelaciones (N) aprox.</th>
+                  <th class="right">Acumulado %</th>
+                </tr>
+              </thead>
+              <tbody id="hazard-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div class="muted">Referencias: “Pico de riesgo” = tramo con mayor Δ pp. “Supervivencia %” = 100 − cancelación %. Cohortes jóvenes sólo muestran hasta su edad máxima observada.</div>
+    </div>
+  </div>
+
+  <script>
+  // ========== Datos de base (consistente con Paneles B/C) ==========
+  const COHORTS = [
+    { cohort: '2025-02', N: 9,  canc: [11.1111,11.1111,11.1111,11.1111,11.1111,22.2222,33.3333] },
+    { cohort: '2025-03', N: 3,  canc: [0,33.3333,33.3333,33.3333,66.6667,66.6667,null] },
+    { cohort: '2025-04', N: 17, canc: [0,11.7647,23.5294,23.5294,23.5294,null,null] },
+    { cohort: '2025-05', N: 31, canc: [3.2258,6.4516,6.4516,12.9032,null,null,null] },
+    { cohort: '2025-06', N: 93, canc: [2.1505,6.4516,9.6774,null,null,null,null] },
+    { cohort: '2025-07', N: 121,canc: [3.3058,5.7851,null,null,null,null,null] },
+    { cohort: '2025-08', N: 157,canc: [0.6369,null,null,null,null,null,null] },
+  ];
+
+  // ========== Utilidades ==========
+  const $ = sel => document.querySelector(sel);
+  const fmtPct = v => (v==null || Number.isNaN(v)) ? '—' : v.toFixed(1) + '%';
+  const round = (x,p=0)=> Math.round(x*10**p)/10**p;
+  function lastDefined(a){ for(let i=a.length-1;i>=0;i--) if(a[i]!=null) return a[i]; return null; }
+  function maxDefinedIndex(a){ for(let i=a.length-1;i>=0;i--) if(a[i]!=null) return i; return -1; }
+
+  // ========== Estado ==========
+  let metric = 'cancel'; // 'cancel' | 'survive'
+  const cohortSel = $('#cohort');
+  const btnCancel = $('#btn-cancel');
+  const btnSurvive = $('#btn-survive');
+
+  // llenar select
+  COHORTS.forEach(c => { const o=document.createElement('option'); o.value=c.cohort; o.textContent=c.cohort; cohortSel.appendChild(o); });
+  cohortSel.value = '2025-06';
+
+  // ========== Render principal ==========
+  function render(){
+    const cohortId = cohortSel.value;
+    const row = COHORTS.find(r => r.cohort === cohortId);
+    if(!row){ console.error('Cohorte no encontrada', cohortId); return; }
+
+    const canc = row.canc.slice();
+    const maxIdx = maxDefinedIndex(canc);
+    const ages = Array.from({length: maxIdx+1}, (_,i)=>i);
+
+    // KPIs
+    const finalPct = lastDefined(canc);
+    const cancN = finalPct==null ? null : round(finalPct * row.N / 100);
+    $('#kpiN').textContent = row.N;
+    $('#kpiCancPct').textContent = fmtPct(finalPct);
+    $('#kpiCancN').textContent = cancN==null ? '—' : String(cancN);
+
+    // Hazard por tramo (diferencias en pp)
+    const hazards = [];
+    let prev = 0;
+    ages.forEach((a, idx) => {
+      const v = canc[idx] ?? prev;
+      const dpp = (v - prev);
+      hazards.push({ tramo: idx===0? 'm0' : `m${idx-1}→m${idx}`, dpp, n: round(dpp * row.N / 100), acum: v });
+      prev = v;
+    });
+    // Pico
+    const pico = hazards.reduce((m, h)=> (h.dpp> (m?.dpp ?? -Infinity) ? h : m), null);
+    $('#kpiPico').textContent = pico ? `${pico.tramo} · ${round(pico.dpp,1)} pp` : '—';
+
+    // Tabla de Hazard
+    const tbody = $('#hazard-body');
+    tbody.innerHTML = hazards.map(h => `
+      <tr>
+        <td>${h.tramo}</td>
+        <td class="right">${round(h.dpp,1)}</td>
+        <td class="right">${(h.n==null||Number.isNaN(h.n))?'—':h.n}</td>
+        <td class="right">${fmtPct(h.acum)}</td>
+      </tr>
+    `).join('');
+
+    // Sparkline SVG
+    drawSpark(ages, canc, metric);
+  }
+
+  // ========== Sparkline ==========
+  function drawSpark(ages, cancSeries, metric){
+    const svg = document.getElementById('spark');
+    const W = 800, H = 280, PADL = 36, PADR = 16, PADT = 16, PADB = 28;
+    const w = W - PADL - PADR, h = H - PADT - PADB;
+    svg.innerHTML = '';
+
+    // Fondo / ejes
+    const add = (el) => svg.appendChild(el);
+    svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+
+    function line(x1,y1,x2,y2,stroke='#2a3140',sw=1){
+      const l = document.createElementNS('http://www.w3.org/2000/svg','line');
+      l.setAttribute('x1',x1); l.setAttribute('y1',y1); l.setAttribute('x2',x2); l.setAttribute('y2',y2);
+      l.setAttribute('stroke',stroke); l.setAttribute('stroke-width',sw); add(l);
+    }
+    function text(x,y,txt,anchor='middle',fill='#94a3b8',size=11){
+      const t = document.createElementNS('http://www.w3.org/2000/svg','text');
+      t.setAttribute('x',x); t.setAttribute('y',y); t.setAttribute('fill',fill); t.setAttribute('font-size',size); t.setAttribute('text-anchor',anchor); t.textContent = txt; add(t);
+    }
+
+    // grid horizontal (0..100 cada 25)
+    for(let p=0;p<=100;p+=25){
+      const y = PADT + h - (p/100)*h;
+      line(PADL, y, PADL+w, y, 'rgba(148,163,184,.15)');
+      text(PADL-8, y+4, p+'%', 'end');
+    }
+
+    // ejes X
+    const n = ages.length;
+    const step = n>1 ? w/(n-1) : 0;
+    ages.forEach((a,i)=>{ const x = PADL + i*step; text(x, PADT+h+18, 'm'+a, 'middle'); });
+
+    // Serie (cancel o survival)
+    const yVal = (v) => {
+      const m = (metric==='cancel') ? v : (v==null? null : 100 - v);
+      return m==null? null : (PADT + h - (m/100)*h);
+    };
+
+    const points = ages.map((a,i)=>({ x: PADL + i*step, y: yVal(cancSeries[i]) }));
+    const pathD = points.reduce((acc, p, i)=> {
+      if(p.y==null) return acc; // saltar nulls
+      if(i===0 || points[i-1].y==null) return acc + `M ${p.x} ${p.y}`;
+      return acc + ` L ${p.x} ${p.y}`;
+    }, '');
+
+    const path = document.createElementNS('http://www.w3.org/2000/svg','path');
+    path.setAttribute('d', pathD);
+    path.setAttribute('fill','none');
+    path.setAttribute('stroke', metric==='cancel' ? '#ef4444' : '#22c55e');
+    path.setAttribute('stroke-width','3');
+    add(path);
+
+    // puntos
+    points.forEach(p=>{
+      if(p.y==null) return;
+      const c = document.createElementNS('http://www.w3.org/2000/svg','circle');
+      c.setAttribute('cx', p.x); c.setAttribute('cy', p.y); c.setAttribute('r', 3.5);
+      c.setAttribute('fill', '#0b0c0f'); c.setAttribute('stroke', metric==='cancel' ? '#ef4444' : '#22c55e'); c.setAttribute('stroke-width','2');
+      add(c);
+    });
+  }
+
+  // ========== Eventos ==========
+  document.getElementById('btn-cancel').addEventListener('click', ()=>{
+    metric='cancel';
+    document.getElementById('btn-cancel').setAttribute('aria-pressed','true');
+    document.getElementById('btn-survive').setAttribute('aria-pressed','false');
+    render();
+  });
+  document.getElementById('btn-survive').addEventListener('click', ()=>{
+    metric='survive';
+    document.getElementById('btn-cancel').setAttribute('aria-pressed','false');
+    document.getElementById('btn-survive').setAttribute('aria-pressed','true');
+    render();
+  });
+  document.getElementById('cohort').addEventListener('change', render);
+
+  // init
+  render();
+  </script>
+</body>
+</html>
